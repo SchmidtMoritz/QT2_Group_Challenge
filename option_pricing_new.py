@@ -7,10 +7,18 @@ from qiskit import Aer, QuantumCircuit
 
 from qiskit.circuit.library import LinearAmplitudeFunction
 from qiskit_finance.circuit.library import LogNormalDistribution
-from qiskit.algorithms.amplitude_estimators import IterativeAmplitudeEstimation
+from qiskit.algorithms.amplitude_estimators import (IterativeAmplitudeEstimation,
+                                                    FasterAmplitudeEstimation,
+                                                    AmplitudeEstimation,
+                                                    MaximumLikelihoodAmplitudeEstimation)
 from qiskit_finance.applications import EuropeanCallPricing,EuropeanCallDelta
+
+from qiskit import IBMQ
+
+
+
 # number of qubits to represent the uncertainty
-num_uncertainty_qubits = 3
+num_uncertainty_qubits = 2  # here we use m=n for simplicity
 
 # parameters for considered random distribution
 S = 2.0       # initial spot price
@@ -73,22 +81,57 @@ plt.show()
 exact_value = np.dot(uncertainty_model.probabilities, y)
 exact_delta = sum(uncertainty_model.probabilities[x >= strike_price])
 
+
+
+# generate european call pricing problem and transform it to an amplitude estimation problem
+ecp = EuropeanCallPricing(num_uncertainty_qubits,strike_price,c_approx,(low,high),uncertainty_model)
+ecp_est_problem = ecp.to_estimation_problem()
+
+# call delta is the probability that the payoff is >0
+# generate european call delta problem and transform it to an amplitude estimation problem
+ecd = EuropeanCallDelta(num_uncertainty_qubits,strike_price,(low,high),uncertainty_model)
+ecd_est_problem = ecd.to_estimation_problem()
+
+IBMQ.load_account()
+provider=IBMQ.get_provider('ibm-q')
+#print(provider.backends())
+#backend = provider.get_backend('ibmq_lima')
+backend = Aer.get_backend('qasm_simulator')
+
 # set target precision and confidence level
 epsilon = 0.01
 alpha = 0.05
 
-ecp = EuropeanCallPricing(num_uncertainty_qubits,strike_price,c_approx,(low,high),uncertainty_model)
-ecp_est_problem = ecp.to_estimation_problem()
+iae = IterativeAmplitudeEstimation(epsilon,alpha,quantum_instance=backend)
 
-ecd = EuropeanCallDelta(num_uncertainty_qubits,strike_price,(low,high),uncertainty_model)
-ecd_est_problem = ecd.to_estimation_problem()
+res_ecp = iae.estimate(ecp_est_problem)
+res_ecd = iae.estimate(ecd_est_problem)
 
-ae = IterativeAmplitudeEstimation(epsilon,alpha,quantum_instance=Aer.get_backend('qasm_simulator'))
+#uncomment any of the following blocks to use a different amplitude estimation algorithm
+'''
+ae = AmplitudeEstimation(num_uncertainty_qubits,quantum_instance=backend)
+
 res_ecp = ae.estimate(ecp_est_problem)
 res_ecd = ae.estimate(ecd_est_problem)
+'''
+
+'''
+fae = FasterAmplitudeEstimation(0.01,8,quantum_instance=backend)
+
+res_ecp = fae.estimate(ecp_est_problem)
+res_ecd = fae.estimate(ecd_est_problem)
+'''
+
+'''
+mlae = MaximumLikelihoodAmplitudeEstimation(4,quantum_instance=backend)
+
+res_ecp = mlae.estimate(ecp_est_problem)
+res_ecd = mlae.estimate(ecd_est_problem)
+'''
 
 pricing_estimate = ecp.interpret(res_ecp)
 delta_estimate = ecd.interpret(res_ecd)
+
 print("Price:")
 print(f'Exact value:        \t{exact_value}')
 print(f'Estimated value:    \t{pricing_estimate}')
